@@ -2,10 +2,14 @@ import { useEscapeGame } from "@/lib/stores/useEscapeGame";
 import { motion } from "framer-motion";
 import ReactConfetti from "react-confetti";
 import { useEffect, useState } from "react";
+import { useSubmitHighScore } from "@/lib/api/highscores";
 
 export function VictoryScreen() {
-  const { resetGame, score } = useEscapeGame();
+  const { resetGame, score, difficulty, currentLevel } = useEscapeGame();
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [playerName, setPlayerName] = useState("");
+  const [scoreSubmitted, setScoreSubmitted] = useState(false);
+  const submitHighScore = useSubmitHighScore();
 
   useEffect(() => {
     const handleResize = () => {
@@ -19,6 +23,23 @@ export function VictoryScreen() {
 
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  const handleSubmitScore = async () => {
+    if (!playerName.trim()) return;
+    
+    try {
+      await submitHighScore.mutateAsync({
+        playerName: playerName.trim(),
+        score,
+        difficulty,
+        levelReached: 5,
+        completedGame: true,
+      });
+      setScoreSubmitted(true);
+    } catch (error) {
+      console.error("Failed to submit score:", error);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black flex flex-col items-center justify-center overflow-hidden">
@@ -93,6 +114,49 @@ export function VictoryScreen() {
             {score.toLocaleString()}
           </p>
         </motion.div>
+
+        {!scoreSubmitted ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1.2 }}
+            className="mb-6"
+          >
+            <p className="text-gray-400 text-sm mb-2 tracking-wider" style={{ fontFamily: "'Courier New', monospace" }}>
+              ENTER YOUR NAME FOR THE LEADERBOARD
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value.slice(0, 20))}
+                placeholder="YOUR NAME"
+                maxLength={20}
+                className="bg-black/80 border border-yellow-600 text-white px-4 py-2 tracking-wider text-center w-48"
+                style={{ fontFamily: "'Courier New', monospace" }}
+              />
+              <motion.button
+                onClick={handleSubmitScore}
+                disabled={!playerName.trim() || submitHighScore.isPending}
+                className="px-4 py-2 border border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontFamily: "'Courier New', monospace" }}
+                whileHover={{ scale: playerName.trim() ? 1.05 : 1 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                {submitHighScore.isPending ? "..." : "SAVE"}
+              </motion.button>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.p
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-green-400 text-lg mb-6 tracking-wider"
+            style={{ fontFamily: "'Courier New', monospace" }}
+          >
+            ✓ SCORE SAVED TO LEADERBOARD!
+          </motion.p>
+        )}
       </motion.div>
 
       <motion.button

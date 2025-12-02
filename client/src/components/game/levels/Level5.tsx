@@ -36,7 +36,7 @@ interface Boss {
 }
 
 export function Level5() {
-  const { completeLevel, triggerJumpscare, addScore, phase } = useEscapeGame();
+  const { completeLevel, triggerJumpscare, addScore, phase, enemySpeedMultiplier } = useEscapeGame();
   const [playerPos, setPlayerPos] = useState({ x: GAME_WIDTH / 2 - PLAYER_SIZE / 2, y: GAME_HEIGHT - PLAYER_SIZE - 20 });
   const [enemies, setEnemies] = useState<Enemy[]>([]);
   const [bullets, setBullets] = useState<Bullet[]>([]);
@@ -204,9 +204,10 @@ export function Level5() {
       });
     };
 
-    const interval = setInterval(moveEnemies, 500);
+    const enemyMoveSpeed = Math.max(200, Math.floor(500 / enemySpeedMultiplier));
+    const interval = setInterval(moveEnemies, enemyMoveSpeed);
     return () => clearInterval(interval);
-  }, [gamePhase, phase, enemyDirection, gameWon]);
+  }, [gamePhase, phase, enemyDirection, gameWon, enemySpeedMultiplier]);
 
   useEffect(() => {
     if (gamePhase !== 'enemies' || phase !== "playing" || gameWon) return;
@@ -227,9 +228,10 @@ export function Level5() {
       }
     };
 
-    const interval = setInterval(enemyShoot, 1000);
+    const shootSpeed = Math.max(500, Math.floor(1000 / enemySpeedMultiplier));
+    const interval = setInterval(enemyShoot, shootSpeed);
     return () => clearInterval(interval);
-  }, [gamePhase, phase, enemies, gameWon]);
+  }, [gamePhase, phase, enemies, gameWon, enemySpeedMultiplier]);
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
@@ -341,14 +343,17 @@ export function Level5() {
       });
     };
 
-    const moveInterval = setInterval(moveBoss, 800);
-    const shootInterval = setInterval(bossShoot, 1500);
+    const bossMoveSpeed = Math.max(400, Math.floor(800 / enemySpeedMultiplier));
+    const bossShootSpeed = Math.max(700, Math.floor(1500 / enemySpeedMultiplier));
+    
+    const moveInterval = setInterval(moveBoss, bossMoveSpeed);
+    const shootInterval = setInterval(bossShoot, bossShootSpeed);
     
     return () => {
       clearInterval(moveInterval);
       clearInterval(shootInterval);
     };
-  }, [gamePhase, boss, phase, gameWon]);
+  }, [gamePhase, boss, phase, gameWon, enemySpeedMultiplier]);
 
   useEffect(() => {
     if (boss && boss.health <= 0 && !gameWon) {

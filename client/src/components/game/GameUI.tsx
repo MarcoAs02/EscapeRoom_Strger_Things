@@ -1,9 +1,15 @@
-import { useEscapeGame } from "@/lib/stores/useEscapeGame";
+import { useEscapeGame, Difficulty } from "@/lib/stores/useEscapeGame";
 import { useEffect } from "react";
 import { motion } from "framer-motion";
 
+const DIFFICULTY_COLORS: Record<Difficulty, string> = {
+  easy: "#22c55e",
+  medium: "#f59e0b",
+  hard: "#ef4444",
+};
+
 export function GameUI() {
-  const { timeRemaining, maxTime, currentLevel, score, decrementTime, isTimerRunning } = useEscapeGame();
+  const { timeRemaining, maxTime, currentLevel, score, decrementTime, isTimerRunning, difficulty } = useEscapeGame();
 
   useEffect(() => {
     if (!isTimerRunning) return;
@@ -82,6 +88,12 @@ export function GameUI() {
             </p>
             <p className="text-white text-xl font-bold tracking-wider" style={{ fontFamily: "'Courier New', monospace" }}>
               {score.toLocaleString()}
+            </p>
+            <p 
+              className="text-xs tracking-widest mt-1 uppercase"
+              style={{ fontFamily: "'Courier New', monospace", color: DIFFICULTY_COLORS[difficulty] }}
+            >
+              {difficulty}
             </p>
           </div>
         </div>

@@ -35,7 +35,7 @@ const MAZE = [
 ];
 
 export function Level4() {
-  const { completeLevel, triggerJumpscare, addScore, phase } = useEscapeGame();
+  const { completeLevel, triggerJumpscare, addScore, phase, enemySpeedMultiplier } = useEscapeGame();
   const [playerPos, setPlayerPos] = useState<Position>({ x: 7, y: 7 });
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
   const [dots, setDots] = useState<boolean[][]>([]);
@@ -244,9 +244,10 @@ export function Level4() {
       }));
     };
 
-    const interval = setInterval(moveGhosts, 400);
+    const ghostSpeed = Math.max(150, Math.floor(400 / enemySpeedMultiplier));
+    const interval = setInterval(moveGhosts, ghostSpeed);
     return () => clearInterval(interval);
-  }, [canMove, playerPos, phase, gameWon]);
+  }, [canMove, playerPos, phase, gameWon, enemySpeedMultiplier]);
 
   useEffect(() => {
     if (!isGameActive.current || gameWon || phase !== "playing") return;
