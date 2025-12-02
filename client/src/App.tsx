@@ -1,73 +1,74 @@
-import { Canvas } from "@react-three/fiber";
-import { Suspense, useEffect, useState } from "react";
-import { KeyboardControls } from "@react-three/drei";
-// import { useAudio } from "./lib/stores/useAudio";
+import { useEffect } from "react";
+import { useEscapeGame } from "./lib/stores/useEscapeGame";
+import { MainMenu } from "./components/game/MainMenu";
+import { GameUI } from "./components/game/GameUI";
+import { Jumpscare } from "./components/game/Jumpscare";
+import { RetryScreen } from "./components/game/RetryScreen";
+import { VictoryScreen } from "./components/game/VictoryScreen";
+import { Level1 } from "./components/game/levels/Level1";
+import { Level2 } from "./components/game/levels/Level2";
+import { Level3 } from "./components/game/levels/Level3";
+import { Level4 } from "./components/game/levels/Level4";
+import { Level5 } from "./components/game/levels/Level5";
 import "@fontsource/inter";
+import "./index.css";
 
-// Import our game components
-
-// Define control keys for the game
-// const controls = [
-//   { name: "forward", keys: ["KeyW", "ArrowUp"] },
-//   { name: "backward", keys: ["KeyS", "ArrowDown"] },
-//   { name: "leftward", keys: ["KeyA", "ArrowLeft"] },
-//   { name: "rightward", keys: ["KeyD", "ArrowRight"] },
-//   { name: "punch", keys: ["KeyJ"] },
-//   { name: "kick", keys: ["KeyK"] },
-//   { name: "block", keys: ["KeyL"] },
-//   { name: "special", keys: ["Space"] },
-// ];
-
-// Main App component
 function App() {
-  //const { gamePhase } = useFighting();
-  const [showCanvas, setShowCanvas] = useState(false);
+  const { phase, currentLevel } = useEscapeGame();
 
-  // Show the canvas once everything is loaded
   useEffect(() => {
-    setShowCanvas(true);
+    const bgMusic = new Audio('/sounds/background.mp3');
+    bgMusic.loop = true;
+    bgMusic.volume = 0.3;
+    
+    const playMusic = () => {
+      bgMusic.play().catch(() => {});
+    };
+    
+    document.addEventListener('click', playMusic, { once: true });
+    document.addEventListener('keydown', playMusic, { once: true });
+    
+    return () => {
+      bgMusic.pause();
+      document.removeEventListener('click', playMusic);
+      document.removeEventListener('keydown', playMusic);
+    };
   }, []);
 
+  const renderLevel = () => {
+    switch (currentLevel) {
+      case 1:
+        return <Level1 />;
+      case 2:
+        return <Level2 />;
+      case 3:
+        return <Level3 />;
+      case 4:
+        return <Level4 />;
+      case 5:
+        return <Level5 />;
+      default:
+        return <Level1 />;
+    }
+  };
+
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}/>
-    // {showCanvas && (
-    //   <KeyboardControls map={controls}>
-    //     {gamePhase === 'menu' && <Menu />}
-
-    //     {gamePhase === 'character_selection' && <CharacterSelection />}
-
-    //     {(gamePhase === 'fighting' || gamePhase === 'round_end' || gamePhase === 'match_end') && (
-    //       <>
-    //         <Canvas
-    //           shadows
-    //           camera={{
-    //             position: [0, 2, 8],
-    //             fov: 45,
-    //             near: 0.1,
-    //             far: 1000
-    //           }}
-    //           gl={{
-    //             antialias: true,
-    //             powerPreference: "default"
-    //           }}
-    //         >
-    //           <color attach="background" args={["#111111"]} />
-
-    //           {/* Lighting */}
-    //           <Lights />
-
-    //           <Suspense fallback={null}>
-    //           </Suspense>
-    //         </Canvas>
-    //         <GameUI />
-    //       </>
-    //     )}
-
-    //     <ShortcutManager />
-    //     <SoundManager />
-    //   </KeyboardControls>
-    // )}
-    //</div>
+    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', background: '#000' }}>
+      {phase === "menu" && <MainMenu />}
+      
+      {phase === "playing" && (
+        <>
+          <GameUI />
+          {renderLevel()}
+        </>
+      )}
+      
+      {phase === "jumpscare" && <Jumpscare />}
+      
+      {phase === "retry" && <RetryScreen />}
+      
+      {phase === "victory" && <VictoryScreen />}
+    </div>
   );
 }
 
