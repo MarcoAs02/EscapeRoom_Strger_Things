@@ -8,24 +8,36 @@ const PLAYER_SIZE = 50;
 const ENEMY_SIZE = 40;
 const BOSS_SIZE = 80;
 const BULLET_SIZE = 8;
-const ENEMY_ROWS = 3;
-const ENEMIES_PER_ROW = 6;
+const WAVES = [
+  { rows: 2, cols: 6, type: "basic" as const, hp: 1 },
+  { rows: 3, cols: 6, type: "sniper" as const, hp: 1 },
+  { rows: 3, cols: 6, type: "burst" as const, hp: 1 },
+  { rows: 2, cols: 5, type: "bomb" as const, hp: 2 },
+];
 
 interface Position {
   x: number;
   y: number;
 }
 
+type EnemyType = "basic" | "sniper" | "burst" | "bomb";
+
 interface Enemy {
   id: number;
   pos: Position;
   alive: boolean;
+  type: EnemyType;
+  hp: number;
 }
 
 interface Bullet {
   id: number;
   pos: Position;
+  vx: number;
+  vy: number;
   isEnemy: boolean;
+  kind: "normal" | "burst" | "sniper" | "bomb" | "boss";
+  ttl?: number;
 }
 
 interface Boss {
@@ -43,6 +55,7 @@ export function Level5() {
   const [boss, setBoss] = useState<Boss | null>(null);
   const [enemyDirection, setEnemyDirection] = useState(1);
   const [gamePhase, setGamePhase] = useState<'enemies' | 'boss'>('enemies');
+  const [waveIndex, setWaveIndex] = useState(0);
   const [message, setMessage] = useState("Destroy the Demogorgons! Use A/D or arrows to move, SPACE to shoot!");
   const [gameWon, setGameWon] = useState(false);
   const keysPressed = useRef<Set<string>>(new Set());
@@ -51,25 +64,29 @@ export function Level5() {
   const isGameActive = useRef(true);
 
   const initializeEnemies = useCallback(() => {
+    const wave = WAVES[waveIndex] || WAVES[0];
     const newEnemies: Enemy[] = [];
     let id = 0;
-    
-    for (let row = 0; row < ENEMY_ROWS; row++) {
-      for (let col = 0; col < ENEMIES_PER_ROW; col++) {
+
+    const startX = wave.type === "bomb" ? 100 : 80;
+    for (let row = 0; row < wave.rows; row++) {
+      for (let col = 0; col < wave.cols; col++) {
         newEnemies.push({
           id: id++,
           pos: {
-            x: 80 + col * (ENEMY_SIZE + 30),
+            x: startX + col * (ENEMY_SIZE + 30),
             y: 50 + row * (ENEMY_SIZE + 20),
           },
           alive: true,
+          type: wave.type,
+          hp: wave.hp,
         });
       }
     }
-    
+
     setEnemies(newEnemies);
     isGameActive.current = true;
-  }, []);
+  }, [waveIndex]);
 
   useEffect(() => {
     initializeEnemies();
@@ -105,23 +122,23 @@ export function Level5() {
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
-    
+
     const gameLoop = () => {
       if (!isGameActive.current || gameWon) return;
-      
+
       const keys = keysPressed.current;
       const speed = 8;
-      
+
       setPlayerPos(prev => {
         let newX = prev.x;
-        
+
         if (keys.has('ArrowLeft') || keys.has('a') || keys.has('A')) {
           newX = Math.max(0, prev.x - speed);
         }
         if (keys.has('ArrowRight') || keys.has('d') || keys.has('D')) {
           newX = Math.min(GAME_WIDTH - PLAYER_SIZE, prev.x + speed);
         }
-        
+
         return { ...prev, x: newX };
       });
 
@@ -131,11 +148,14 @@ export function Level5() {
           setBullets(bullets => [...bullets, {
             id: bulletIdRef.current++,
             pos: { x: prev.x + PLAYER_SIZE / 2 - BULLET_SIZE / 2, y: prev.y - 10 },
+            vx: 0,
+            vy: -8,
             isEnemy: false,
+            kind: "normal",
           }]);
           return prev;
         });
-        
+
         const hitSound = new Audio('/sounds/hit.mp3');
         hitSound.volume = 0.1;
         hitSound.play().catch(() => {});
@@ -148,17 +168,23 @@ export function Level5() {
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
-    
+
     const moveBullets = () => {
       if (!isGameActive.current) return;
-      
+
       setBullets(prev => {
         return prev
           .map(bullet => ({
             ...bullet,
-            pos: { ...bullet.pos, y: bullet.pos.y + (bullet.isEnemy ? 5 : -8) },
+            pos: { ...bullet.pos, x: bullet.pos.x + (bullet.vx ?? 0), y: bullet.pos.y + (bullet.vy ?? (bullet.isEnemy ? 5 : -8)) },
+            ttl: bullet.ttl !== undefined ? bullet.ttl - 1 : bullet.ttl,
           }))
-          .filter(bullet => bullet.pos.y > -20 && bullet.pos.y < GAME_HEIGHT + 20);
+          .filter(bullet => {
+            const withinY = bullet.pos.y > -40 && bullet.pos.y < GAME_HEIGHT + 40;
+            const withinX = bullet.pos.x > -40 && bullet.pos.x < GAME_WIDTH + 40;
+            const aliveTtl = bullet.ttl === undefined || bullet.ttl > 0;
+            return withinX && withinY && aliveTtl;
+          });
       });
     };
 
@@ -168,20 +194,20 @@ export function Level5() {
 
   useEffect(() => {
     if (gamePhase !== 'enemies' || phase !== "playing" || gameWon) return;
-    
+
     const moveEnemies = () => {
       if (!isGameActive.current) return;
-      
+
       setEnemies(prev => {
         const aliveEnemies = prev.filter(e => e.alive);
         if (aliveEnemies.length === 0) return prev;
 
         const leftMost = Math.min(...aliveEnemies.map(e => e.pos.x));
         const rightMost = Math.max(...aliveEnemies.map(e => e.pos.x));
-        
+
         let newDirection = enemyDirection;
         let moveDown = false;
-        
+
         if (rightMost + ENEMY_SIZE >= GAME_WIDTH - 10 && enemyDirection > 0) {
           newDirection = -1;
           moveDown = true;
@@ -189,11 +215,11 @@ export function Level5() {
           newDirection = 1;
           moveDown = true;
         }
-        
+
         if (newDirection !== enemyDirection) {
           setEnemyDirection(newDirection);
         }
-        
+
         return prev.map(enemy => ({
           ...enemy,
           pos: {
@@ -211,86 +237,126 @@ export function Level5() {
 
   useEffect(() => {
     if (gamePhase !== 'enemies' || phase !== "playing" || gameWon) return;
-    
+
     const enemyShoot = () => {
       if (!isGameActive.current) return;
-      
+
       const aliveEnemies = enemies.filter(e => e.alive);
       if (aliveEnemies.length === 0) return;
-      
-      if (Math.random() > 0.5) {
-        const shooter = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)];
+
+      const wave = WAVES[waveIndex] || WAVES[0];
+      const shooter = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)];
+      const basePos = { x: shooter.pos.x + ENEMY_SIZE / 2 - BULLET_SIZE / 2, y: shooter.pos.y + ENEMY_SIZE };
+
+      const addBullet = (vx: number, vy: number, kind: Bullet["kind"], extraTtl?: number) => {
         setBullets(prev => [...prev, {
           id: bulletIdRef.current++,
-          pos: { x: shooter.pos.x + ENEMY_SIZE / 2 - BULLET_SIZE / 2, y: shooter.pos.y + ENEMY_SIZE },
+          pos: { ...basePos },
+          vx,
+          vy,
           isEnemy: true,
+          kind,
+          ttl: extraTtl,
         }]);
+      };
+
+      switch (shooter.type) {
+        case "basic":
+          if (Math.random() > 0.4) addBullet(0, 5, "normal");
+          break;
+        case "sniper":
+          if (Math.random() > 0.6) addBullet(0, 8, "sniper");
+          break;
+        case "burst":
+          if (Math.random() > 0.55) {
+            addBullet(-2, 6, "burst");
+            addBullet(0, 7, "burst");
+            addBullet(2, 6, "burst");
+          }
+          break;
+        case "bomb":
+          if (Math.random() > 0.65) {
+            addBullet(0, 3.5, "bomb", 90);
+          }
+          break;
+        default:
+          addBullet(0, 5, "normal");
+          break;
       }
     };
 
-    const shootSpeed = Math.max(500, Math.floor(1000 / enemySpeedMultiplier));
+    const wave = WAVES[waveIndex] || WAVES[0];
+    const baseShoot = wave.type === "burst" ? 900 : wave.type === "bomb" ? 1100 : 750;
+    const shootSpeed = Math.max(450, Math.floor(baseShoot / enemySpeedMultiplier));
     const interval = setInterval(enemyShoot, shootSpeed);
     return () => clearInterval(interval);
-  }, [gamePhase, phase, enemies, gameWon, enemySpeedMultiplier]);
+  }, [gamePhase, phase, enemies, gameWon, enemySpeedMultiplier, waveIndex]);
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
-    
+
     setBullets(prev => {
       let bulletsToRemove: number[] = [];
       let enemiesHit: number[] = [];
       let bossHit = false;
       let playerHit = false;
-      
+
       prev.forEach(bullet => {
+        const bSize = bullet.kind === "bomb" ? BULLET_SIZE * 2 : BULLET_SIZE;
+        const bHeight = bullet.isEnemy ? bSize * 2 : bSize * 2;
         if (!bullet.isEnemy) {
           if (gamePhase === 'enemies') {
             enemies.forEach(enemy => {
               if (enemy.alive &&
                   bullet.pos.x < enemy.pos.x + ENEMY_SIZE &&
-                  bullet.pos.x + BULLET_SIZE > enemy.pos.x &&
+                  bullet.pos.x + bSize > enemy.pos.x &&
                   bullet.pos.y < enemy.pos.y + ENEMY_SIZE &&
-                  bullet.pos.y + BULLET_SIZE > enemy.pos.y) {
+                  bullet.pos.y + bHeight > enemy.pos.y) {
                 enemiesHit.push(enemy.id);
                 bulletsToRemove.push(bullet.id);
               }
             });
           } else if (boss && boss.alive) {
             if (bullet.pos.x < boss.pos.x + BOSS_SIZE &&
-                bullet.pos.x + BULLET_SIZE > boss.pos.x &&
+                bullet.pos.x + bSize > boss.pos.x &&
                 bullet.pos.y < boss.pos.y + BOSS_SIZE &&
-                bullet.pos.y + BULLET_SIZE > boss.pos.y) {
+                bullet.pos.y + bHeight > boss.pos.y) {
               bossHit = true;
               bulletsToRemove.push(bullet.id);
             }
           }
         } else {
           if (bullet.pos.x < playerPos.x + PLAYER_SIZE &&
-              bullet.pos.x + BULLET_SIZE > playerPos.x &&
+              bullet.pos.x + bSize > playerPos.x &&
               bullet.pos.y < playerPos.y + PLAYER_SIZE &&
-              bullet.pos.y + BULLET_SIZE > playerPos.y) {
+              bullet.pos.y + bHeight > playerPos.y) {
             playerHit = true;
           }
         }
       });
-      
+
       if (enemiesHit.length > 0) {
-        setEnemies(e => e.map(enemy => 
-          enemiesHit.includes(enemy.id) ? { ...enemy, alive: false } : enemy
-        ));
-        addScore(50 * enemiesHit.length);
+        setEnemies(e => e.map(enemy => {
+          if (!enemiesHit.includes(enemy.id)) return enemy;
+          const newHp = enemy.hp - 1;
+          if (newHp <= 0) {
+            addScore(50);
+            return { ...enemy, alive: false };
+          }
+          return { ...enemy, hp: newHp };
+        }));
       }
-      
+
       if (bossHit && boss) {
         setBoss(prev => prev ? { ...prev, health: prev.health - 1 } : null);
         addScore(20);
       }
-      
+
       if (playerHit && isGameActive.current) {
         isGameActive.current = false;
         triggerJumpscare();
       }
-      
+
       return prev.filter(b => !bulletsToRemove.includes(b.id));
     });
   }, [bullets, enemies, boss, gamePhase, playerPos, addScore, triggerJumpscare, phase, gameWon]);
@@ -298,27 +364,32 @@ export function Level5() {
   useEffect(() => {
     const aliveEnemies = enemies.filter(e => e.alive);
     if (gamePhase === 'enemies' && enemies.length > 0 && aliveEnemies.length === 0 && !gameWon) {
-      setMessage("The Demogorgons are defeated! But wait... VECNA APPEARS!");
-      setGamePhase('boss');
-      setBullets([]);
-      setBoss({
-        pos: { x: GAME_WIDTH / 2 - BOSS_SIZE / 2, y: 50 },
-        health: 20,
-        maxHealth: 20,
-        alive: true,
-      });
+      if (waveIndex < WAVES.length - 1) {
+        setWaveIndex(i => i + 1);
+        setMessage(`Wave ${waveIndex + 2}! New enemy pattern incoming...`);
+      } else {
+        setMessage("The Demogorgons are defeated! But wait... VECNA APPEARS!");
+        setGamePhase('boss');
+        setBullets([]);
+        setBoss({
+          pos: { x: GAME_WIDTH / 2 - BOSS_SIZE / 2, y: 50 },
+          health: 24,
+          maxHealth: 24,
+          alive: true,
+        });
+      }
     }
-  }, [enemies, gamePhase, gameWon]);
+  }, [enemies, gamePhase, gameWon, waveIndex]);
 
   useEffect(() => {
     if (gamePhase !== 'boss' || !boss || phase !== "playing" || gameWon) return;
-    
+
     const moveBoss = () => {
       if (!isGameActive.current) return;
-      
+
       setBoss(prev => {
         if (!prev || !prev.alive) return prev;
-        const newX = prev.pos.x + (Math.random() > 0.5 ? 20 : -20);
+        const newX = prev.pos.x + (Math.random() > 0.5 ? 24 : -24);
         return {
           ...prev,
           pos: { ...prev.pos, x: Math.max(0, Math.min(GAME_WIDTH - BOSS_SIZE, newX)) },
@@ -328,27 +399,41 @@ export function Level5() {
 
     const bossShoot = () => {
       if (!isGameActive.current || !boss || !boss.alive) return;
-      
+
       setBoss(currentBoss => {
         if (!currentBoss || !currentBoss.alive) return currentBoss;
-        
-        for (let i = -1; i <= 1; i++) {
+        const ratio = currentBoss.health / currentBoss.maxHealth;
+        const emit = (vx: number, vy: number) => {
           setBullets(prev => [...prev, {
             id: bulletIdRef.current++,
-            pos: { x: currentBoss.pos.x + BOSS_SIZE / 2 - BULLET_SIZE / 2 + i * 30, y: currentBoss.pos.y + BOSS_SIZE },
+            pos: { x: currentBoss.pos.x + BOSS_SIZE / 2 - BULLET_SIZE / 2, y: currentBoss.pos.y + BOSS_SIZE },
+            vx,
+            vy,
             isEnemy: true,
+            kind: "boss",
           }]);
+        };
+
+        if (ratio > 0.7) {
+          for (let i = -1; i <= 1; i++) emit(i * 1.5, 6);
+        } else if (ratio > 0.35) {
+          for (let i = -2; i <= 2; i++) emit(i * 1.8, 6.5);
+          emit(-3, 5.5);
+          emit(3, 5.5);
+        } else {
+          for (let i = -3; i <= 3; i++) emit(i * 2, 6.5);
+          emit(0, 9);
         }
         return currentBoss;
       });
     };
 
-    const bossMoveSpeed = Math.max(400, Math.floor(800 / enemySpeedMultiplier));
-    const bossShootSpeed = Math.max(700, Math.floor(1500 / enemySpeedMultiplier));
-    
+    const bossMoveSpeed = Math.max(380, Math.floor(760 / enemySpeedMultiplier));
+    const bossShootSpeed = Math.max(520, Math.floor(1200 / enemySpeedMultiplier));
+
     const moveInterval = setInterval(moveBoss, bossMoveSpeed);
     const shootInterval = setInterval(bossShoot, bossShootSpeed);
-    
+
     return () => {
       clearInterval(moveInterval);
       clearInterval(shootInterval);
@@ -362,11 +447,11 @@ export function Level5() {
       setBoss(prev => prev ? { ...prev, alive: false } : null);
       setMessage("VECNA IS DEFEATED! You've saved Hawkins!");
       addScore(500);
-      
+
       const successSound = new Audio('/sounds/success.mp3');
       successSound.volume = 0.5;
       successSound.play().catch(() => {});
-      
+
       setTimeout(() => {
         completeLevel();
       }, 2000);
@@ -487,8 +572,8 @@ export function Level5() {
             style={{
               left: bullet.pos.x,
               top: bullet.pos.y,
-              width: BULLET_SIZE,
-              height: bullet.isEnemy ? BULLET_SIZE * 2 : BULLET_SIZE * 2,
+              width: bullet.kind === "bomb" ? BULLET_SIZE * 2 : BULLET_SIZE,
+              height: bullet.kind === "bomb" ? BULLET_SIZE * 2 : BULLET_SIZE * 2,
               boxShadow: bullet.isEnemy ? '0 0 10px #ff0000' : '0 0 10px #a855f7',
             }}
           />
@@ -498,12 +583,11 @@ export function Level5() {
       <div className="relative z-10 mt-4 text-center">
         <p className="text-purple-400 text-sm" style={{ fontFamily: "'Courier New', monospace" }}>
           {gamePhase === 'enemies' 
-            ? `ENEMIES: ${enemies.filter(e => !e.alive).length}/${enemies.length}` 
-            : boss && `VECNA HEALTH: ${boss.health}/${boss.maxHealth}`
-          }
+            ? `WAVE ${waveIndex + 1}/${WAVES.length} - ENEMIES: ${enemies.filter(e => !e.alive).length}/${enemies.length}` 
+            : boss && `VECNA HEALTH: ${boss.health}/${boss.maxHealth}`}
         </p>
         <p className="text-gray-500 text-xs mt-2" style={{ fontFamily: "'Courier New', monospace" }}>
-          A/D or Arrows to move • SPACE to shoot
+          A/D or Arrows to move / SPACE to shoot
         </p>
       </div>
     </div>

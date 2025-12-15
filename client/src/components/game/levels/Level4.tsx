@@ -16,6 +16,8 @@ interface Ghost {
   color: string;
 }
 
+type GhostMode = "scatter" | "chase" | "frightened";
+
 const MAZE = [
   [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
   [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
@@ -24,7 +26,8 @@ const MAZE = [
   [1,0,1,0,1,1,0,1,0,1,1,0,1,0,1],
   [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
   [1,1,1,0,1,0,0,0,0,0,1,0,1,1,1],
-  [1,0,0,0,1,0,1,1,1,0,1,0,0,0,1],
+  // tunnel row: aperture ai bordi per warp
+  [0,0,0,0,1,0,1,1,1,0,1,0,0,0,0],
   [1,1,1,0,1,0,0,0,0,0,1,0,1,1,1],
   [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
   [1,0,1,0,1,1,0,1,0,1,1,0,1,0,1],
@@ -37,38 +40,67 @@ const MAZE = [
 export function Level4() {
   const { completeLevel, triggerJumpscare, addScore, phase, enemySpeedMultiplier } = useEscapeGame();
   const [playerPos, setPlayerPos] = useState<Position>({ x: 7, y: 7 });
+  const [playerDir, setPlayerDir] = useState<Position>({ x: 0, y: 0 });
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
   const [dots, setDots] = useState<boolean[][]>([]);
+  const [powerDots, setPowerDots] = useState<boolean[][]>([]);
   const [dotsCollected, setDotsCollected] = useState(0);
   const [totalDots, setTotalDots] = useState(0);
   const [gameWon, setGameWon] = useState(false);
   const [message, setMessage] = useState("Collect all the dots! Use WASD or Arrow keys to move Steve!");
+  const [frightenedUntil, setFrightenedUntil] = useState(0);
+  const [ghostMode, setGhostMode] = useState<GhostMode>("scatter");
   const keysPressed = useRef<Set<string>>(new Set());
+  const pendingDirection = useRef<Position>({ x: 0, y: 0 });
   const isGameActive = useRef(true);
+  const modeSwitchRef = useRef<NodeJS.Timeout | null>(null);
+  const frightenedTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const initializeGame = useCallback(() => {
     const newDots: boolean[][] = [];
+    const newPowerDots: boolean[][] = [];
     let dotCount = 0;
-    
+
     for (let y = 0; y < GRID_SIZE; y++) {
       newDots[y] = [];
+      newPowerDots[y] = [];
       for (let x = 0; x < GRID_SIZE; x++) {
         if (MAZE[y][x] === 0) {
           newDots[y][x] = true;
+          newPowerDots[y][x] = false;
           dotCount++;
         } else {
           newDots[y][x] = false;
+          newPowerDots[y][x] = false;
         }
       }
     }
-    
+
     newDots[7][7] = false;
     dotCount--;
-    
+    const powerPositions = [
+      { x: 1, y: 7 },
+      { x: 13, y: 7 },
+      { x: 7, y: 1 },
+      { x: 7, y: 13 },
+    ];
+    powerPositions.forEach(({ x, y }) => {
+      if (MAZE[y][x] === 0) {
+        newPowerDots[y][x] = true;
+        if (newDots[y][x]) {
+          newDots[y][x] = false;
+          dotCount--;
+        }
+      }
+    });
+
     setDots(newDots);
+    setPowerDots(newPowerDots);
     setTotalDots(dotCount);
     setDotsCollected(0);
-    
+    setFrightenedUntil(0);
+    setGhostMode("scatter");
+
     const ghostColors = ['#ff0000', '#00ffff', '#ff69b4', '#ffa500'];
     const newGhosts: Ghost[] = [
       { pos: { x: 1, y: 1 }, direction: { x: 1, y: 0 }, color: ghostColors[0] },
@@ -78,6 +110,7 @@ export function Level4() {
     ];
     setGhosts(newGhosts);
     setPlayerPos({ x: 7, y: 7 });
+    setPlayerDir({ x: 0, y: 0 });
     isGameActive.current = true;
   }, []);
 
@@ -95,18 +128,25 @@ export function Level4() {
   }, [phase]);
 
   const canMove = useCallback((x: number, y: number) => {
-    if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return false;
+    if (x < 0) x = GRID_SIZE - 1;
+    if (x >= GRID_SIZE) x = 0;
+    if (y < 0) y = GRID_SIZE - 1;
+    if (y >= GRID_SIZE) y = 0;
     return MAZE[y][x] === 0;
   }, []);
 
   const movePlayer = useCallback((dx: number, dy: number) => {
     if (!isGameActive.current || gameWon) return;
-    
+
     setPlayerPos(prev => {
-      const newX = prev.x + dx;
-      const newY = prev.y + dy;
-      
+      let newX = prev.x + dx;
+      let newY = prev.y + dy;
+
       if (canMove(newX, newY)) {
+        if (newX < 0) newX = GRID_SIZE - 1;
+        if (newX >= GRID_SIZE) newX = 0;
+        if (newY < 0) newY = GRID_SIZE - 1;
+        if (newY >= GRID_SIZE) newY = 0;
         return { x: newX, y: newY };
       }
       return prev;
@@ -116,6 +156,10 @@ export function Level4() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       keysPressed.current.add(e.key);
+      if (['ArrowUp','w','W'].includes(e.key)) pendingDirection.current = { x: 0, y: -1 };
+      if (['ArrowDown','s','S'].includes(e.key)) pendingDirection.current = { x: 0, y: 1 };
+      if (['ArrowLeft','a','A'].includes(e.key)) pendingDirection.current = { x: -1, y: 0 };
+      if (['ArrowRight','d','D'].includes(e.key)) pendingDirection.current = { x: 1, y: 0 };
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -133,47 +177,79 @@ export function Level4() {
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
-    
+
     const gameLoop = () => {
       if (!isGameActive.current || gameWon) return;
-      
-      const keys = keysPressed.current;
-      
-      if (keys.has('ArrowUp') || keys.has('w') || keys.has('W')) {
-        movePlayer(0, -1);
+
+      const desired = pendingDirection.current;
+      let nextDir = playerDir;
+
+      // prova ad applicare la direzione bufferizzata appena possibile
+      if (canMove(playerPos.x + desired.x, playerPos.y + desired.y)) {
+        nextDir = desired;
+      } else if (!canMove(playerPos.x + nextDir.x, playerPos.y + nextDir.y)) {
+        // se bloccato, fermati finché non è libera una direzione
+        nextDir = { x: 0, y: 0 };
       }
-      if (keys.has('ArrowDown') || keys.has('s') || keys.has('S')) {
-        movePlayer(0, 1);
+
+      if (nextDir.x !== playerDir.x || nextDir.y !== playerDir.y) {
+        setPlayerDir(nextDir);
       }
-      if (keys.has('ArrowLeft') || keys.has('a') || keys.has('A')) {
-        movePlayer(-1, 0);
-      }
-      if (keys.has('ArrowRight') || keys.has('d') || keys.has('D')) {
-        movePlayer(1, 0);
+
+      if (nextDir.x !== 0 || nextDir.y !== 0) {
+        movePlayer(nextDir.x, nextDir.y);
       }
     };
 
-    const interval = setInterval(gameLoop, 150);
+    const interval = setInterval(gameLoop, 120);
     return () => clearInterval(interval);
-  }, [movePlayer, phase, gameWon]);
+  }, [movePlayer, phase, gameWon, playerDir, playerPos, canMove]);
 
   useEffect(() => {
     if (!isGameActive.current || gameWon) return;
-    
+
     setDots(prev => {
       if (!prev[playerPos.y] || prev[playerPos.y][playerPos.x] === undefined) return prev;
-      
+
       if (prev[playerPos.y][playerPos.x]) {
         const newDots = prev.map(row => [...row]);
         newDots[playerPos.y][playerPos.x] = false;
         setDotsCollected(c => c + 1);
         addScore(10);
-        
+
         const hitSound = new Audio('/sounds/hit.mp3');
         hitSound.volume = 0.1;
         hitSound.play().catch(() => {});
-        
+
         return newDots;
+      }
+      return prev;
+    });
+
+    setPowerDots(prev => {
+      if (!prev[playerPos.y] || prev[playerPos.y][playerPos.x] === undefined) return prev;
+      if (prev[playerPos.y][playerPos.x]) {
+        const newPower = prev.map(row => [...row]);
+        newPower[playerPos.y][playerPos.x] = false;
+        setFrightenedUntil(Date.now() + 7000);
+        setGhostMode("frightened");
+
+        // inverti la direzione per dare l'effetto "panico"
+        setGhosts(prevGhosts => prevGhosts.map(g => ({
+          ...g,
+          direction: { x: -g.direction.x, y: -g.direction.y },
+        })));
+
+        const powerSound = new Audio('/sounds/success.mp3');
+        powerSound.volume = 0.3;
+        powerSound.play().catch(() => {});
+
+        if (frightenedTimerRef.current) clearTimeout(frightenedTimerRef.current);
+        frightenedTimerRef.current = setTimeout(() => {
+          setGhostMode("chase");
+        }, 7000);
+
+        return newPower;
       }
       return prev;
     });
@@ -184,11 +260,11 @@ export function Level4() {
       setGameWon(true);
       isGameActive.current = false;
       setMessage("All dots collected! Steve escapes the arcade!");
-      
+
       const successSound = new Audio('/sounds/success.mp3');
       successSound.volume = 0.5;
       successSound.play().catch(() => {});
-      
+
       setTimeout(() => {
         completeLevel();
       }, 1500);
@@ -197,69 +273,152 @@ export function Level4() {
 
   useEffect(() => {
     if (phase !== "playing" || gameWon) return;
-    
+
     const moveGhosts = () => {
       if (!isGameActive.current || gameWon) return;
-      
-      setGhosts(prev => prev.map(ghost => {
+
+      setGhosts(prev => prev.map((ghost, idx) => {
         const directions = [
           { x: 0, y: -1 },
           { x: 0, y: 1 },
           { x: -1, y: 0 },
           { x: 1, y: 0 },
         ];
-        
+
         const validDirs = directions.filter(dir => 
           canMove(ghost.pos.x + dir.x, ghost.pos.y + dir.y)
         );
-        
+
         if (validDirs.length === 0) return ghost;
-        
-        let bestDir = validDirs[0];
-        let bestDist = Infinity;
-        
-        for (const dir of validDirs) {
-          const newX = ghost.pos.x + dir.x;
-          const newY = ghost.pos.y + dir.y;
-          const dist = Math.abs(newX - playerPos.x) + Math.abs(newY - playerPos.y);
-          
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestDir = dir;
+
+        // evita inversione immediata per feeling Pac-Man
+        const nonOpposite = validDirs.filter(dir => !(dir.x === -ghost.direction.x && dir.y === -ghost.direction.y));
+        const candidateDirs = nonOpposite.length ? nonOpposite : validDirs;
+
+        // corner target per modalità scatter
+        const scatterTargets = [
+          { x: 1, y: 1 },
+          { x: GRID_SIZE - 2, y: 1 },
+          { x: 1, y: GRID_SIZE - 2 },
+          { x: GRID_SIZE - 2, y: GRID_SIZE - 2 },
+        ];
+
+        // target ambush (2 celle avanti alla direzione del player)
+        const ambushTarget = {
+          x: playerPos.x + playerDir.x * 2,
+          y: playerPos.y + playerDir.y * 2,
+        };
+
+        let bestDir = candidateDirs[0];
+
+        if (ghostMode === "frightened") {
+          let farthest = -1;
+          for (const dir of candidateDirs) {
+            let newX = ghost.pos.x + dir.x;
+            let newY = ghost.pos.y + dir.y;
+            if (newX < 0) newX = GRID_SIZE - 1;
+            if (newX >= GRID_SIZE) newX = 0;
+            if (newY < 0) newY = GRID_SIZE - 1;
+            if (newY >= GRID_SIZE) newY = 0;
+            const dist = Math.abs(newX - playerPos.x) + Math.abs(newY - playerPos.y);
+            if (dist > farthest) {
+              farthest = dist;
+              bestDir = dir;
+            }
+          }
+        } else {
+          const target =
+            ghostMode === "scatter"
+              ? scatterTargets[idx % scatterTargets.length]
+              : idx % 2 === 0
+                ? playerPos
+                : { x: Math.max(0, Math.min(GRID_SIZE - 1, ambushTarget.x)), y: Math.max(0, Math.min(GRID_SIZE - 1, ambushTarget.y)) };
+
+          let bestScore = Infinity;
+          for (const dir of candidateDirs) {
+            let newX = ghost.pos.x + dir.x;
+            let newY = ghost.pos.y + dir.y;
+            if (newX < 0) newX = GRID_SIZE - 1;
+            if (newX >= GRID_SIZE) newX = 0;
+            if (newY < 0) newY = GRID_SIZE - 1;
+            if (newY >= GRID_SIZE) newY = 0;
+            const dist = Math.abs(newX - target.x) + Math.abs(newY - target.y);
+            if (dist < bestScore) {
+              bestScore = dist;
+              bestDir = dir;
+            }
+          }
+
+          // leggera randomizzazione per non essere perfetti
+          if (Math.random() > 0.7) {
+            bestDir = candidateDirs[Math.floor(Math.random() * candidateDirs.length)];
           }
         }
-        
-        if (Math.random() > 0.7) {
-          bestDir = validDirs[Math.floor(Math.random() * validDirs.length)];
-        }
-        
+
+        let newX = ghost.pos.x + bestDir.x;
+        let newY = ghost.pos.y + bestDir.y;
+        if (newX < 0) newX = GRID_SIZE - 1;
+        if (newX >= GRID_SIZE) newX = 0;
+        if (newY < 0) newY = GRID_SIZE - 1;
+        if (newY >= GRID_SIZE) newY = 0;
+
         return {
           ...ghost,
           pos: { 
-            x: ghost.pos.x + bestDir.x, 
-            y: ghost.pos.y + bestDir.y 
+            x: newX, 
+            y: newY 
           },
           direction: bestDir,
         };
       }));
     };
 
-    const ghostSpeed = Math.max(150, Math.floor(400 / enemySpeedMultiplier));
+    const baseSpeed = Math.max(130, Math.floor(360 / enemySpeedMultiplier));
+    const ghostSpeed = ghostMode === "frightened" ? baseSpeed + 130 : baseSpeed;
     const interval = setInterval(moveGhosts, ghostSpeed);
     return () => clearInterval(interval);
-  }, [canMove, playerPos, phase, gameWon, enemySpeedMultiplier]);
+  }, [canMove, playerPos, phase, gameWon, enemySpeedMultiplier, ghostMode]);
 
   useEffect(() => {
     if (!isGameActive.current || gameWon || phase !== "playing") return;
-    
+
     for (const ghost of ghosts) {
       if (ghost.pos.x === playerPos.x && ghost.pos.y === playerPos.y) {
-        isGameActive.current = false;
-        triggerJumpscare();
+        if (ghostMode === "frightened") {
+          setGhosts(prev => prev.map((g, idx) => g === ghost ? {
+            ...g,
+            pos: idx === 0 ? { x: 1, y: 1 } :
+                 idx === 1 ? { x: 13, y: 1 } :
+                 idx === 2 ? { x: 1, y: 13 } : { x: 13, y: 13 },
+          } : g));
+          addScore(100);
+        } else {
+          isGameActive.current = false;
+          triggerJumpscare();
+        }
         return;
       }
     }
-  }, [ghosts, playerPos, triggerJumpscare, gameWon, phase]);
+  }, [ghosts, playerPos, triggerJumpscare, gameWon, phase, ghostMode, addScore]);
+
+  useEffect(() => {
+    if (phase !== "playing" || gameWon) return;
+    const switchMode = () => {
+      if (ghostMode !== "frightened") {
+        setGhostMode(prev => prev === "scatter" ? "chase" : "scatter");
+      }
+    };
+    modeSwitchRef.current = setInterval(switchMode, 9000);
+    return () => {
+      if (modeSwitchRef.current) clearInterval(modeSwitchRef.current);
+    };
+  }, [phase, gameWon, ghostMode]);
+
+  useEffect(() => {
+    return () => {
+      if (frightenedTimerRef.current) clearTimeout(frightenedTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden" style={{ background: "#000" }}>
@@ -311,7 +470,23 @@ export function Level4() {
                 left: x * CELL_SIZE + CELL_SIZE / 2 - 3,
                 top: y * CELL_SIZE + CELL_SIZE / 2 - 3,
                 width: 6,
-                height: 6,
+              height: 6,
+            }}
+          />
+          )
+        )))}
+
+        {powerDots.map((row, y) => row.map((hasDot, x) => (
+          hasDot && (
+            <div
+              key={`powerdot-${x}-${y}`}
+              className="absolute bg-orange-400 rounded-full"
+              style={{
+                left: x * CELL_SIZE + CELL_SIZE / 2 - 8,
+                top: y * CELL_SIZE + CELL_SIZE / 2 - 8,
+                width: 16,
+                height: 16,
+                boxShadow: "0 0 10px 4px rgba(255,165,0,0.6)",
               }}
             />
           )
@@ -344,8 +519,8 @@ export function Level4() {
               top: ghost.pos.y * CELL_SIZE + 2,
               width: CELL_SIZE - 4,
               height: CELL_SIZE - 4,
-              borderColor: ghost.color,
-              boxShadow: `0 0 10px ${ghost.color}`,
+              borderColor: ghostMode === "frightened" ? "#00f" : ghost.color,
+              boxShadow: `0 0 10px ${ghostMode === "frightened" ? "#00f" : ghost.color}`,
             }}
             animate={{ y: [0, -2, 0] }}
             transition={{ duration: 0.5, repeat: Infinity, delay: index * 0.1 }}
@@ -362,6 +537,9 @@ export function Level4() {
       <div className="relative z-10 mt-4 text-center">
         <p className="text-yellow-400 text-lg" style={{ fontFamily: "'Courier New', monospace" }}>
           DOTS: {dotsCollected}/{totalDots}
+        </p>
+        <p className="text-blue-300 text-sm" style={{ fontFamily: "'Courier New', monospace" }}>
+          {ghostMode === "frightened" ? `POWER: ${Math.max(0, Math.floor((frightenedUntil - Date.now())/1000))}s` : 'POWER: inactive'}
         </p>
         <p className="text-gray-500 text-xs mt-2" style={{ fontFamily: "'Courier New', monospace" }}>
           Use WASD or Arrow keys to move
